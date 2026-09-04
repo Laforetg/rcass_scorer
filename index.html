@@ -134,6 +134,13 @@
   .alert.danger { background: var(--danger-bg); color: var(--danger-text); border: 1px solid #f5c0c0; }
   .alert.warn { background: var(--warn-bg); color: var(--warn-text); border: 1px solid #e8d5a3; }
 
+  .modal-overlay { position: fixed; inset: 0; background: rgba(26,25,22,.45); display: flex; align-items: center; justify-content: center; z-index: 200; padding: 1rem; }
+  .modal-box { background: var(--surface); border-radius: var(--radius-lg); border: 1px solid var(--border); padding: 1.5rem; max-width: 420px; width: 100%; box-shadow: 0 8px 30px rgba(0,0,0,.18); }
+  .modal-box h3 { font-size: 15px; font-weight: 600; margin-bottom: 8px; }
+  .modal-box p { font-size: 13px; color: var(--text-2); margin-bottom: 14px; line-height: 1.5; }
+  .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; }
+  .key-status-dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; margin-right: 6px; flex-shrink: 0; }
+
   @media print {
     .top-bar, .step-card, .btn-row, .status, .result-actions, button { display: none !important; }
     body { background: white; }
@@ -162,6 +169,22 @@
   </div>
   <div style="display:flex;align-items:center;gap:16px">
     <span>Protocol BIOM-102-RSRT</span>
+    <button class="ghost" id="api-key-btn" onclick="openKeyModal()" style="padding:5px 12px;font-size:12px;display:flex;align-items:center"></button>
+  </div>
+</div>
+
+<div class="modal-overlay" id="key-modal" style="display:none">
+  <div class="modal-box">
+    <h3>Anthropic API key</h3>
+    <p>This tool calls the Claude API directly from your browser, so it needs your own Anthropic API key. The key is stored only in this browser (in local storage) — it is never saved to the shared tool or visible to anyone else who opens this page.</p>
+    <label class="field-label" for="api-key-input">API key</label>
+    <input type="password" id="api-key-input" placeholder="sk-ant-api03-…" autocomplete="off">
+    <div class="api-note">Don't have one? Ask your study coordinator, or create one at <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com</a>.</div>
+    <div class="modal-actions">
+      <button class="ghost" id="key-modal-clear" onclick="clearApiKeyFromModal()" style="margin-right:auto">Clear stored key</button>
+      <button class="ghost" onclick="closeKeyModal()">Cancel</button>
+      <button class="primary" onclick="saveApiKeyFromModal()">Save key</button>
+    </div>
   </div>
 </div>
 
@@ -226,8 +249,46 @@ let uploadedFiles = [];
 // ─── Init ─────────────────────────────────────────────────────────────────────
 document.getElementById('scored-date').value = new Date().toISOString().slice(0,10);
 
-// ─── API key (embedded) ───────────────────────────────────────────────────────
-const API_KEY = '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';
+// ─── API key (entered by each user, kept only in this browser) ────────────────
+// IMPORTANT: never hardcode a real API key in this file. This file is served
+// from a public GitHub repo / GitHub Pages, so anything written here is public
+// and will be found and disabled within hours. Each person who uses this tool
+// enters their own key once; it's saved to this browser's localStorage only.
+const KEY_STORAGE = 'rcass_api_key';
+function getApiKey(){ return (localStorage.getItem(KEY_STORAGE) || '').trim(); }
+function setApiKey(k){ localStorage.setItem(KEY_STORAGE, k.trim()); }
+function clearApiKey(){ localStorage.removeItem(KEY_STORAGE); }
+
+function updateKeyStatus(){
+  const has = !!getApiKey();
+  const btn = document.getElementById('api-key-btn');
+  btn.innerHTML = `<span class="key-status-dot" style="background:${has ? 'var(--success-text)' : 'var(--danger-text)'}"></span>${has ? 'API key set' : 'Set API key'}`;
+}
+
+function openKeyModal(){
+  document.getElementById('api-key-input').value = getApiKey();
+  document.getElementById('key-modal-clear').style.display = getApiKey() ? '' : 'none';
+  document.getElementById('key-modal').style.display = 'flex';
+  document.getElementById('api-key-input').focus();
+}
+function closeKeyModal(){
+  document.getElementById('key-modal').style.display = 'none';
+}
+function saveApiKeyFromModal(){
+  const v = document.getElementById('api-key-input').value.trim();
+  if(!v){ alert('Enter an API key, or use "Clear stored key" to remove it.'); return; }
+  setApiKey(v);
+  updateKeyStatus();
+  closeKeyModal();
+  document.getElementById('error-area').innerHTML = '';
+}
+function clearApiKeyFromModal(){
+  clearApiKey();
+  updateKeyStatus();
+  closeKeyModal();
+}
+
+updateKeyStatus();
 
 function updateScoreBtn(){
   const hasFiles = uploadedFiles.some(f => f !== null);
@@ -315,6 +376,12 @@ async function runScoring(){
   const files        = uploadedFiles.filter(f => f !== null);
 
   if(!files.length){ showError('Upload at least one questionnaire page.'); return; }
+
+  if(!getApiKey()){
+    showError('No API key set yet. Click "Set API key" in the top bar and paste in your Anthropic API key, then try again.');
+    openKeyModal();
+    return;
+  }
 
   document.getElementById('score-btn').disabled = true;
   document.getElementById('result-area').innerHTML = '';
@@ -537,7 +604,7 @@ Return ONLY this JSON object. No markdown, no explanation, no code fences.
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-api-key': API_KEY,
+        'x-api-key': getApiKey(),
         'anthropic-version': '2023-06-01',
         'anthropic-dangerous-direct-browser-access': 'true'
       },
@@ -551,6 +618,9 @@ Return ONLY this JSON object. No markdown, no explanation, no code fences.
     if (!resp.ok) {
       const err = await resp.json().catch(() => ({}));
       const msg = err.error?.message || ('API error ' + resp.status);
+      if (resp.status === 401) {
+        throw new Error('AUTH_FAILED::' + msg);
+      }
       // 529 = overloaded, 500 = server error — both retryable
       if ((resp.status === 529 || resp.status >= 500) && attempt < 3) {
         const wait = attempt * 8000;
@@ -603,7 +673,15 @@ Return ONLY this JSON object. No markdown, no explanation, no code fences.
   } catch(e){
     setStatus('');
     let msg = e.message || String(e);
-    if (msg.toLowerCase().includes('networkerror') || msg.toLowerCase().includes('failed to fetch') || msg.toLowerCase().includes('load failed')) {
+    if (msg.startsWith('AUTH_FAILED::')) {
+      const detail = msg.slice('AUTH_FAILED::'.length);
+      msg =
+        '<strong>Your API key was rejected.</strong><br><br>' +
+        escHtml(detail) + '<br><br>' +
+        'This usually means the key is invalid, expired, or was disabled. Click "Set API key" in the top bar to enter a working key.';
+      clearApiKey();
+      updateKeyStatus();
+    } else if (msg.toLowerCase().includes('networkerror') || msg.toLowerCase().includes('failed to fetch') || msg.toLowerCase().includes('load failed')) {
       msg =
         '<strong>Network error — could not reach the scoring server.</strong><br><br>' +
         'Most common causes:<br>' +
